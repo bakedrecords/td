@@ -2,6 +2,12 @@ import { MAX_TOWER_LEVEL } from './constants';
 
 export type TowerTypeId = 'gun' | 'cannon' | 'frost' | 'sniper' | 'support';
 
+/** タワーのスキル（1 ステージに 1 回だけ使える）。効果は Game 側で type.id ごとに実装。 */
+export interface TowerSkill {
+  name: string; // ボタン表示用の短い名前
+  desc: string; // 一覧での説明
+}
+
 /** レベルごとの性能・特殊効果。Lv で挙動が変化するタワーに対応する。 */
 export interface TowerLevel {
   name?: string; // そのレベルの呼び名（任意）
@@ -23,7 +29,9 @@ export interface TowerType {
   projectileSpeed: number;
   projectileColor: string;
   isSupport?: boolean; // 補助塔（攻撃しない）
+  melee?: boolean; // 近接（弾を撃たず、射程内の敵全員に当たる斬撃）
   levels: TowerLevel[]; // Lv1..Lv3
+  skill: TowerSkill; // 1 ステージ 1 回のスキル
   desc: string; // 一覧に表示する役割・進化の説明
 }
 
@@ -41,22 +49,25 @@ export const TOWER_TYPES: Record<TowerTypeId, TowerType> = {
       { name: 'マシンガン', range: 185, damage: 16, fireRate: 3.4 },
       { name: 'ファイア', range: 195, damage: 22, fireRate: 3.0, splashRadius: 62, projectileColor: '#ff8a3c' },
     ],
+    skill: { name: '全体攻撃', desc: '画面全体に大ダメージ（使用後 3 秒攻撃不能）' },
     desc: 'Lv2 マシンガンで連射UP / Lv3 ファイアで範囲攻撃',
   },
-  // Sae: 近距離・高火力。Lv で射程と威力が少しずつ上がる
+  // Sae: 日本刀の斬撃。近接・短射程だが射程内は範囲攻撃
   cannon: {
     id: 'cannon',
     name: 'Sae',
     cost: 90,
     color: '#ff9f43',
-    projectileSpeed: 620,
+    projectileSpeed: 0,
     projectileColor: '#ffb86b',
+    melee: true,
     levels: [
-      { name: '近距離', range: 110, damage: 40, fireRate: 1.1 },
-      { range: 128, damage: 62, fireRate: 1.2 },
-      { range: 148, damage: 92, fireRate: 1.35 },
+      { name: '斬撃', range: 105, damage: 30, fireRate: 1.1 },
+      { range: 120, damage: 46, fireRate: 1.2 },
+      { range: 136, damage: 66, fireRate: 1.35 },
     ],
-    desc: '近距離・高火力。Lvで射程と威力UP',
+    skill: { name: '高速斬撃', desc: '3 秒間 連射×3、その後 10 秒攻撃不能' },
+    desc: '近接・斬撃（射程内は範囲）。Lvで射程と威力UP',
   },
   // Eita: 減速。Lv3 で範囲攻撃＋範囲減速になる
   frost: {
@@ -71,9 +82,10 @@ export const TOWER_TYPES: Record<TowerTypeId, TowerType> = {
       { range: 172, damage: 9, fireRate: 1.5, slowFactor: 0.4, slowDuration: 1.6 },
       { name: 'フロスト範囲', range: 184, damage: 12, fireRate: 1.5, slowFactor: 0.35, slowDuration: 1.8, splashRadius: 78 },
     ],
+    skill: { name: '全体攻撃+減速', desc: '画面全体に攻撃＋減速（使用後 10 秒攻撃不能）' },
     desc: '減速。Lv3 で範囲攻撃＆範囲減速',
   },
-  // Tsukahara: 長射程・高威力（射程は以前より控えめ）
+  // Tsukahara: 長射程・高威力（射程は控えめ）
   sniper: {
     id: 'sniper',
     name: 'Tsukahara',
@@ -86,6 +98,7 @@ export const TOWER_TYPES: Record<TowerTypeId, TowerType> = {
       { range: 268, damage: 98, fireRate: 0.55 },
       { range: 286, damage: 150, fireRate: 0.6 },
     ],
+    skill: { name: '移動', desc: '別の空きマスへ移動できる' },
     desc: '長射程・高威力の狙撃（連射は遅い）',
   },
   // ayase: 補助塔。周囲タワーの連射速度を上げる
@@ -102,6 +115,7 @@ export const TOWER_TYPES: Record<TowerTypeId, TowerType> = {
       { range: 160, damage: 0, fireRate: 0, supportFireRateMul: 1.45 },
       { range: 170, damage: 0, fireRate: 0, supportFireRateMul: 1.6 },
     ],
+    skill: { name: '攻撃力UP', desc: '10 秒間、範囲内の味方の攻撃力 1.2 倍' },
     desc: '補助。周囲タワーの連射速度UP（攻撃しない）',
   },
 };

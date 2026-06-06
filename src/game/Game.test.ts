@@ -2,12 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { Game } from './Game';
 import { cellCenter } from './Path';
 import { TOWER_TYPES } from './towerTypes';
-import { SELL_REFUND_RATE } from './constants';
 
 // 下部パネルのボタン中心座標（Game 内のレイアウトに対応）
 const PALETTE_CANNON = { x: 219, y: 1128 }; // paletteRect(1) の中心
 const UPGRADE_BTN = { x: 183, y: 1225 };
-const SELL_BTN = { x: 537, y: 1225 };
+const SKILL_BTN = { x: 537, y: 1225 }; // 旧 売却ボタンの位置
 const MAIN_ACTION = { x: 263, y: 1225 }; // 開始 / 早出しボタン
 const INFO_BTN = { x: 617, y: 1225 };
 
@@ -63,12 +62,12 @@ describe('Game', () => {
     expect(g.money).toBe(100 - 40);
   });
 
-  it('タワーを選択して売却するとゴールドが払い戻される', () => {
+  it('スキルボタンはゴールドを払い戻さない（売却は廃止）', () => {
     const g = new Game();
-    g.handlePointer(cellCenter(3, 3));
-    g.handlePointer(cellCenter(3, 3));
-    g.handlePointer(SELL_BTN);
-    expect(g.money).toBe(100 + Math.round(TOWER_TYPES.gun.cost * SELL_REFUND_RATE));
+    g.handlePointer(cellCenter(3, 3)); // gun, money 100
+    g.handlePointer(cellCenter(3, 3)); // 選択
+    g.handlePointer(SKILL_BTN); // Matenrou スキル（全体攻撃）
+    expect(g.money).toBe(150 - TOWER_TYPES.gun.cost); // 100 のまま（払い戻し無し）
   });
 
   it('メインボタンでウェーブを開始でき、完了すると ready に戻る', () => {

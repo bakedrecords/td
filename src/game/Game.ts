@@ -5,7 +5,6 @@ import {
   GRID_BOTTOM,
   GRID_TOP,
   ROWS,
-  SELL_REFUND_RATE,
   START_LIVES,
   START_MONEY,
   TILE,
@@ -67,6 +66,8 @@ export class Game {
   // 建設対象のタワー種別 / 選択中の既設タワー
   private buildType: TowerTypeId = 'gun';
   private selectedTower: Tower | null = null;
+  // Tsukahara スキルでの移動待ち（移動先タップ待ち）
+  private relocatingTower: Tower | null = null;
 
   // 敵スポーン（早出しに対応するため複数のスポナーを同時進行）
   private spawners: Spawner[] = [];
@@ -74,11 +75,15 @@ export class Game {
   private readyCountdown = 0;
   // ステータス一覧の表示中フラグ（表示中はゲームを一時停止）
   private showInfo = false;
+  // 全体攻撃スキルの画面フラッシュ
+  private flashTimer = 0;
+  private flashColor = '#ffffff';
 
   // ---- 更新 -------------------------------------------------------------
 
   update(dt: number): void {
     if (this.showInfo) return; // 一覧表示中は一時停止
+    if (this.flashTimer > 0) this.flashTimer -= dt;
     if (this.state === 'gameover' || this.state === 'victory') return;
 
     if (this.state === 'ready' && this.readyCountdown > 0) {
@@ -125,13 +130,16 @@ export class Game {
 
     for (const t of this.towers.values()) {
       if (t.isSupport) continue;
-      let mul = 1;
+      let fireMul = 1;
+      let dmgMul = 1;
       for (const s of supports) {
         if (Math.hypot(t.pos.x - s.pos.x, t.pos.y - s.pos.y) <= s.range) {
-          mul *= s.supportFireRateMul;
+          fireMul *= s.supportFireRateMul;
+          if (s.auraDamageBuffTimer > 0) dmgMul *= 1.2; // ayase スキル発動中
         }
       }
-      t.buffMultiplier = mul;
+      t.buffMultiplier = fireMul;
+      t.damageBuffMultiplier = dmgMul;
     }
   }
 
@@ -199,9 +207,11 @@ export class Game {
     this.state = 'ready';
     this.buildType = 'gun';
     this.selectedTower = null;
+    this.relocatingTower = null;
     this.spawners = [];
     this.readyCountdown = 0;
     this.showInfo = false;
+    this.flashTimer = 0;
   }
 
   private get remainingEnemies(): number {
@@ -232,21 +242,31 @@ export class Game {
       return;
     }
 
-    // 選択中タワーの操作（強化・売却）
+    // Tsukahara 移動モード: グリッドのマスをタップで移動、フィールド外でキャンセル
+    if (this.relocatingTower) {
+      if (v.x >= 0 && v.x < COLS * TILE && v.y >= GRID_TOP && v.y < GRID_BOTTOM) {
+        this.relocateTower(Math.floor(v.x / TILE), Math.floor((v.y - GRID_TOP) / TILE));
+      } else {
+        this.relocatingTower = null;
+      }
+      return;
+    }
+
+    // 選択中タワーの操作（強化・スキル）
     if (this.selectedTower) {
       if (this.inRect(v, this.upgradeBtn)) {
         this.tryUpgradeSelected();
         return;
       }
-      if (this.inRect(v, this.sellBtn)) {
-        this.sellSelected();
+      if (this.inRect(v, this.skillBtn)) {
+        this.activateSkill(this.selectedTower);
         return;
       }
     }
 
     // 下部パネル
     if (v.y >= GRID_BOTTOM) {
-      if (this.selectedTower) return; // 強化/売却パネル表示中は他を無効化
+      if (this.selectedTower) return; // 強化/スキルパネル表示中は他を無効化
 
       for (let i = 0; i < TOWER_TYPE_LIST.length; i++) {
         if (this.inRect(v, this.paletteRect(i))) {
@@ -315,12 +335,61 @@ export class Game {
     t.applyUpgrade(cost);
   }
 
-  private sellSelected(): void {
-    const t = this.selectedTower;
+  /** 選択中タワーのスキルを発動（1 ステージ 1 回）。 */
+  private activateSkill(t: Tower): void {
+    if (t.skillUsed) return;
+    switch (t.type.id) {
+      case 'gun': // Matenrou: 画面全体攻撃 → 3 秒攻撃不能
+        this.screenAttack(t.damage * 4, '#ff8a3c');
+        t.disableAttack(3);
+        t.skillUsed = true;
+        break;
+      case 'frost': // Eita: 画面全体攻撃＋減速 → 10 秒攻撃不能
+        this.screenAttack(t.damage * 3, '#7bb6ff');
+        for (const e of this.enemies) e.applySlow(0.45, 4);
+        t.disableAttack(10);
+        t.skillUsed = true;
+        break;
+      case 'support': // ayase: 10 秒間 範囲内の攻撃力 1.2 倍
+        t.auraDamageBuffTimer = 10;
+        t.skillUsed = true;
+        break;
+      case 'cannon': // Sae: 3 秒 連射×3 → その後 10 秒攻撃不能
+        t.startFireBurst(3, 3, 10);
+        t.skillUsed = true;
+        break;
+      case 'sniper': // Tsukahara: 別マスへ移動（移動完了で消費）
+        this.relocatingTower = t;
+        break;
+    }
+  }
+
+  private screenAttack(amount: number, color: string): void {
+    for (const e of this.enemies) e.damage(amount);
+    this.flashTimer = 0.3;
+    this.flashColor = color;
+  }
+
+  /** Tsukahara を指定マスへ移動。無効マスならキャンセル。 */
+  private relocateTower(col: number, row: number): void {
+    const t = this.relocatingTower;
     if (!t) return;
-    this.money += Math.round(t.totalInvested * SELL_REFUND_RATE);
-    this.towers.delete(t.cellKey);
-    this.selectedTower = null;
+    const key = `${col},${row}`;
+    const valid =
+      col >= 0 &&
+      col < COLS &&
+      row >= 0 &&
+      row < ROWS &&
+      !isPathCell(col, row) &&
+      !this.towers.has(key);
+    if (valid) {
+      this.towers.delete(t.cellKey);
+      t.moveTo(cellCenter(col, row), key);
+      this.towers.set(key, t);
+      t.skillUsed = true;
+      this.selectedTower = t;
+    }
+    this.relocatingTower = null;
   }
 
   private inRect(v: Vec2, r: Rect): boolean {
@@ -349,7 +418,7 @@ export class Game {
     return { x: 12, y: 1182, w: 342, h: 86 };
   }
 
-  private get sellBtn(): Rect {
+  private get skillBtn(): Rect {
     return { x: 366, y: 1182, w: 342, h: 86 };
   }
 
@@ -358,17 +427,57 @@ export class Game {
   render(ctx: CanvasRenderingContext2D): void {
     this.renderField(ctx);
     this.renderPath(ctx);
+    if (this.relocatingTower) this.renderRelocationHighlight(ctx);
     this.renderSupportAuras(ctx);
     this.renderSelectionRange(ctx);
     this.renderTowers(ctx);
     this.renderEnemies(ctx);
     this.renderProjectiles(ctx);
+    this.renderFlash(ctx);
     this.renderTopBar(ctx);
     this.renderBottomPanel(ctx);
+    if (this.relocatingTower) this.renderRelocationHint(ctx);
     if (this.state === 'gameover' || this.state === 'victory') {
       this.renderOverlay(ctx);
     }
     if (this.showInfo) this.renderInfoOverlay(ctx);
+  }
+
+  private renderFlash(ctx: CanvasRenderingContext2D): void {
+    if (this.flashTimer <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = Math.min(0.5, (this.flashTimer / 0.3) * 0.5);
+    ctx.fillStyle = this.flashColor;
+    ctx.fillRect(0, GRID_TOP, VIRTUAL_W, GRID_BOTTOM - GRID_TOP);
+    ctx.restore();
+  }
+
+  private renderRelocationHighlight(ctx: CanvasRenderingContext2D): void {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (isPathCell(c, r) || this.towers.has(`${c},${r}`)) continue;
+        const x = c * TILE;
+        const y = GRID_TOP + r * TILE;
+        ctx.fillStyle = 'rgba(123,182,255,0.18)';
+        this.roundRect(ctx, x + 3, y + 3, TILE - 6, TILE - 6, 8);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(123,182,255,0.5)';
+        ctx.lineWidth = 2;
+        this.roundRect(ctx, x + 3, y + 3, TILE - 6, TILE - 6, 8);
+        ctx.stroke();
+      }
+    }
+  }
+
+  private renderRelocationHint(ctx: CanvasRenderingContext2D): void {
+    ctx.fillStyle = 'rgba(11,16,32,0.88)';
+    this.roundRect(ctx, 50, GRID_TOP + 16, VIRTUAL_W - 100, 56, 12);
+    ctx.fill();
+    ctx.strokeStyle = COLORS.wave;
+    ctx.lineWidth = 2;
+    this.roundRect(ctx, 50, GRID_TOP + 16, VIRTUAL_W - 100, 56, 12);
+    ctx.stroke();
+    this.text(ctx, '移動先の空きマスをタップ（外でキャンセル）', VIRTUAL_W / 2, GRID_TOP + 44, 22, COLORS.text);
   }
 
   private renderField(ctx: CanvasRenderingContext2D): void {
@@ -413,12 +522,13 @@ export class Game {
   private renderSupportAuras(ctx: CanvasRenderingContext2D): void {
     for (const t of this.towers.values()) {
       if (!t.isSupport) continue;
-      ctx.fillStyle = 'rgba(255, 123, 213, 0.07)';
+      const active = t.auraDamageBuffTimer > 0; // スキル発動中は強調
+      ctx.fillStyle = active ? 'rgba(196,167,255,0.14)' : 'rgba(255,123,213,0.07)';
       ctx.beginPath();
       ctx.arc(t.pos.x, t.pos.y, t.range, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 123, 213, 0.30)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = active ? 'rgba(196,167,255,0.60)' : 'rgba(255,123,213,0.30)';
+      ctx.lineWidth = active ? 3 : 2;
       ctx.stroke();
     }
   }
@@ -497,6 +607,24 @@ export class Game {
         ctx.beginPath();
         ctx.arc(px, t.pos.y + t.radius - 5, 3, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      // 近接の斬撃エフェクト
+      if (t.isMelee && t.slashTimer > 0) {
+        ctx.strokeStyle = 'rgba(255, 245, 220, 0.85)';
+        ctx.lineWidth = 5;
+        ctx.beginPath();
+        ctx.arc(t.pos.x, t.pos.y, t.range * 0.92, t.angle - 0.9, t.angle + 0.9);
+        ctx.stroke();
+      }
+
+      // 攻撃不能（スキル後）はカウントダウンを重ねる
+      if (t.attackDisabled) {
+        ctx.fillStyle = 'rgba(5, 7, 15, 0.55)';
+        ctx.beginPath();
+        ctx.arc(t.pos.x, t.pos.y, t.radius + 2, 0, Math.PI * 2);
+        ctx.fill();
+        this.text(ctx, `${Math.ceil(t.attackDisabledTimer)}`, t.pos.x, t.pos.y, 26, COLORS.danger);
       }
     }
   }
@@ -669,18 +797,22 @@ export class Game {
 
   private renderTowerActions(ctx: CanvasRenderingContext2D, t: Tower): void {
     const sub = t.levelName ? `  ${t.levelName}` : '';
-    this.text(ctx, `${t.type.name}  Lv.${t.level}${sub}`, 24, 1108, 26, t.type.color, 'left');
+    this.text(ctx, `${t.type.name}  Lv.${t.level}${sub}`, 24, 1104, 26, t.type.color, 'left');
 
     let stats: string;
     if (t.isSupport) {
       const pct = Math.round((t.supportFireRateMul - 1) * 100);
-      stats = `周囲の連射 +${pct}%    射程 ${t.range}`;
+      stats = `周囲の連射 +${pct}%   射程 ${t.range}`;
     } else {
-      const tag = t.splashRadius ? '  範囲' : t.slowFactor ? '  減速' : '';
-      const buff = t.buffMultiplier > 1 ? `  （補助+${Math.round((t.buffMultiplier - 1) * 100)}%）` : '';
-      stats = `攻撃 ${t.damage}  射程 ${t.range}  連射 ${t.fireRate.toFixed(1)}/s${tag}${buff}`;
+      const tag = t.isMelee ? '  斬撃(範囲)' : t.splashRadius ? '  範囲' : t.slowFactor ? '  減速' : '';
+      const fb = t.buffMultiplier > 1 ? `  補助連+${Math.round((t.buffMultiplier - 1) * 100)}%` : '';
+      const db = t.damageBuffMultiplier > 1 ? '  攻+20%' : '';
+      stats = `攻撃 ${t.damage}  射程 ${t.range}  連射 ${t.fireRate.toFixed(1)}/s${tag}${fb}${db}`;
     }
-    this.text(ctx, stats, 24, 1146, 22, COLORS.textDim, 'left');
+    this.text(ctx, stats, 24, 1138, 21, COLORS.textDim, 'left');
+
+    const status = this.skillStatusText(t);
+    if (status) this.text(ctx, status, 24, 1164, 20, COLORS.skill, 'left');
 
     const cost = upgradeCost(t.type, t.level);
     if (cost === null) {
@@ -689,8 +821,20 @@ export class Game {
       this.button(ctx, this.upgradeBtn, `強化 Lv.${t.level + 1}  ${cost}G`, COLORS.accent, this.money >= cost);
     }
 
-    const refund = Math.round(t.totalInvested * SELL_REFUND_RATE);
-    this.button(ctx, this.sellBtn, `売却  +${refund}G`, COLORS.sell);
+    if (this.relocatingTower === t) {
+      this.button(ctx, this.skillBtn, '移動先を選択', COLORS.wave);
+    } else if (t.skillUsed) {
+      this.button(ctx, this.skillBtn, 'スキル 使用済', COLORS.skill, false);
+    } else {
+      this.button(ctx, this.skillBtn, `スキル: ${t.type.skill.name}`, COLORS.skill);
+    }
+  }
+
+  private skillStatusText(t: Tower): string {
+    if (t.attackDisabled) return `攻撃不能 ${Math.ceil(t.attackDisabledTimer)}s`;
+    if (t.fireBurstTimer > 0) return `高速斬撃 ${Math.ceil(t.fireBurstTimer)}s`;
+    if (t.isSupport && t.auraDamageBuffTimer > 0) return `攻撃力UP ${Math.ceil(t.auraDamageBuffTimer)}s`;
+    return '';
   }
 
   private button(
@@ -730,53 +874,56 @@ export class Game {
     this.text(ctx, 'ステータス一覧', VIRTUAL_W / 2, 60, 42, COLORS.accent);
     this.text(ctx, 'タップで閉じる', VIRTUAL_W / 2, 100, 20, COLORS.textDim);
 
-    // --- タワー（Lv1 の基本性能＋進化の説明） ---
-    this.text(ctx, 'タワー（Lv1 の基本性能）', 30, 126, 22, COLORS.text, 'left');
+    // --- タワー（Lv1 基本性能・進化・スキル） ---
+    this.text(ctx, 'タワー（Lv1基本 / 進化 / スキルは1ステージ1回）', 30, 134, 20, COLORS.text, 'left');
     TOWER_TYPE_LIST.forEach((type, i) => {
-      const y = 154 + i * 88;
-      this.infoRowBg(ctx, y, 80);
+      const y = 160 + i * 98;
+      this.infoRowBg(ctx, y, 90);
       const lv1 = type.levels[0];
       ctx.fillStyle = type.color;
       ctx.beginPath();
-      ctx.arc(52, y + 24, 12, 0, Math.PI * 2);
+      ctx.arc(52, y + 22, 12, 0, Math.PI * 2);
       ctx.fill();
-      this.text(ctx, type.name, 78, y + 22, 24, type.color, 'left');
-      this.text(ctx, `建設 ${type.cost}G`, VIRTUAL_W - 28, y + 22, 20, COLORS.money, 'right');
+      this.text(ctx, type.name, 78, y + 22, 23, type.color, 'left');
+      this.text(ctx, `建設 ${type.cost}G`, VIRTUAL_W - 28, y + 22, 19, COLORS.money, 'right');
 
       let stats: string;
       if (type.isSupport) {
         const pct = Math.round(((lv1.supportFireRateMul ?? 1) - 1) * 100);
         stats = `補助: 周囲の連射 +${pct}%・射程 ${lv1.range}・攻撃なし`;
       } else {
-        const tag = lv1.splashRadius
-          ? '・範囲'
-          : lv1.slowFactor
-            ? `・減速 ${Math.round((1 - lv1.slowFactor) * 100)}%`
-            : '';
+        const tag = type.melee
+          ? '・斬撃(範囲)'
+          : lv1.splashRadius
+            ? '・範囲'
+            : lv1.slowFactor
+              ? `・減速 ${Math.round((1 - lv1.slowFactor) * 100)}%`
+              : '';
         stats = `攻撃 ${lv1.damage}・射程 ${lv1.range}・連射 ${lv1.fireRate.toFixed(1)}/s${tag}`;
       }
-      this.text(ctx, stats, 78, y + 47, 18, COLORS.text, 'left');
-      this.text(ctx, type.desc, 78, y + 69, 17, COLORS.textDim, 'left');
+      this.text(ctx, stats, 78, y + 44, 17, COLORS.text, 'left');
+      this.text(ctx, type.desc, 78, y + 63, 15, COLORS.textDim, 'left');
+      this.text(ctx, `スキル: ${type.skill.desc}`, 78, y + 82, 16, COLORS.skill, 'left');
     });
 
     // --- 敵（種別倍率） ---
-    const enemyTop = 154 + TOWER_TYPE_LIST.length * 88 + 8;
-    this.text(ctx, '敵（種別倍率）', 30, enemyTop, 22, COLORS.text, 'left');
+    const enemyTop = 160 + TOWER_TYPE_LIST.length * 98 + 14;
+    this.text(ctx, '敵（種別倍率）', 30, enemyTop, 20, COLORS.text, 'left');
     ENEMY_TYPE_LIST.forEach((et, i) => {
-      const y = enemyTop + 28 + i * 74;
-      this.infoRowBg(ctx, y, 66);
+      const y = enemyTop + 26 + i * 68;
+      this.infoRowBg(ctx, y, 60);
       ctx.fillStyle = et.color;
       ctx.beginPath();
-      ctx.arc(52, y + 22, 12, 0, Math.PI * 2);
+      ctx.arc(52, y + 20, 12, 0, Math.PI * 2);
       ctx.fill();
-      this.text(ctx, et.name, 78, y + 20, 24, et.color, 'left');
-      this.text(ctx, `報酬 ${et.reward}G`, VIRTUAL_W - 28, y + 20, 20, COLORS.money, 'right');
+      this.text(ctx, et.name, 78, y + 19, 23, et.color, 'left');
+      this.text(ctx, `報酬 ${et.reward}G`, VIRTUAL_W - 28, y + 19, 19, COLORS.money, 'right');
       this.text(
         ctx,
         `HP ×${et.hpMul}・速度 ×${et.speedMul}・装甲 ${et.armor}`,
         78,
-        y + 46,
-        18,
+        y + 43,
+        17,
         COLORS.textDim,
         'left',
       );
@@ -786,8 +933,8 @@ export class Game {
       ctx,
       '※敵の基準HP=20+9×WAVE / 速度=60+3×WAVE（種別倍率を乗算）',
       VIRTUAL_W / 2,
-      enemyTop + 28 + ENEMY_TYPE_LIST.length * 74 + 22,
-      17,
+      enemyTop + 26 + ENEMY_TYPE_LIST.length * 68 + 18,
+      16,
       COLORS.textDim,
     );
   }

@@ -114,4 +114,67 @@ describe('Tower', () => {
   it('Tsukahara の射程は控えめ（300 未満）', () => {
     expect(TOWER_TYPES.sniper.levels[0].range).toBeLessThan(300);
   });
+
+  it('Sae は近接で、射程内の敵全員に当たる（弾は出ない）', () => {
+    const e1 = new Enemy(ENEMY_TYPES.normal, 100, 0, 5);
+    const e2 = new Enemy(ENEMY_TYPES.normal, 100, 0, 5);
+    e1.pos.x = 100; e1.pos.y = 100;
+    e2.pos.x = 140; e2.pos.y = 100;
+    const sae = new Tower({ x: 100, y: 100 }, TOWER_TYPES.cannon, '0,0');
+    const projectiles: Projectile[] = [];
+
+    sae.update(0.001, [e1, e2], projectiles);
+
+    expect(sae.isMelee).toBe(true);
+    expect(projectiles.length).toBe(0); // 近接：弾を撃たない
+    expect(e1.hp).toBeLessThan(100);
+    expect(e2.hp).toBeLessThan(100);
+  });
+
+  it('攻撃力バフ（damageBuffMultiplier）で与ダメージが増える', () => {
+    const e = new Enemy(ENEMY_TYPES.normal, 1000, 0, 5);
+    const sae = new Tower({ x: e.pos.x, y: e.pos.y }, TOWER_TYPES.cannon, '0,0');
+    sae.damageBuffMultiplier = 2;
+    sae.update(0.001, [e], []);
+    const base = TOWER_TYPES.cannon.levels[0].damage;
+    expect(e.hp).toBe(1000 - Math.round(base * 2));
+  });
+
+  it('disableAttack 中は攻撃しない', () => {
+    const e = new Enemy(ENEMY_TYPES.normal, 1000, 0, 5);
+    const t = new Tower({ x: e.pos.x + 20, y: e.pos.y }, TOWER_TYPES.gun, '0,0');
+    t.disableAttack(3);
+    const projectiles: Projectile[] = [];
+    for (let i = 0; i < 60; i++) t.update(1 / 60, [e], projectiles);
+    expect(t.attackDisabled).toBe(true);
+    expect(projectiles.length).toBe(0);
+  });
+
+  it('startFireBurst でバースト中は多く撃ち、終了後は攻撃不能になる', () => {
+    const e = new Enemy(ENEMY_TYPES.normal, 100_000, 0, 5);
+    const pos = { x: e.pos.x + 20, y: e.pos.y };
+
+    const t = new Tower(pos, TOWER_TYPES.gun, '0,0');
+    t.startFireBurst(3, 1, 5); // 1 秒×3、その後 5 秒攻撃不能
+    const pa: Projectile[] = [];
+    for (let i = 0; i < 60; i++) t.update(1 / 60, [e], pa);
+
+    const plain = new Tower(pos, TOWER_TYPES.gun, '1,0');
+    const pb: Projectile[] = [];
+    for (let i = 0; i < 60; i++) plain.update(1 / 60, [e], pb);
+
+    expect(pa.length).toBeGreaterThan(pb.length); // バーストで多く撃つ
+    expect(t.attackDisabled).toBe(true); // バースト後は攻撃不能
+    const after = pa.length;
+    for (let i = 0; i < 60; i++) t.update(1 / 60, [e], pa);
+    expect(pa.length).toBe(after); // 攻撃不能中は撃たない
+  });
+
+  it('moveTo で位置とセルキーが変わる', () => {
+    const t = new Tower({ x: 10, y: 20 }, TOWER_TYPES.sniper, '1,1');
+    t.moveTo({ x: 50, y: 60 }, '2,2');
+    expect(t.cellKey).toBe('2,2');
+    expect(t.pos.x).toBe(50);
+    expect(t.pos.y).toBe(60);
+  });
 });

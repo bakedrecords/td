@@ -40,6 +40,7 @@ export const COLORS = {
   textDim: '#8aa0c8',
   accent: '#46d3a3',
   accentDim: '#2a8d72',
+  skill: '#c4a7ff',
   life: '#ff6b81',
   money: '#ffd35c',
   wave: '#7bb6ff',
