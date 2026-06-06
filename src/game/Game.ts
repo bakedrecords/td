@@ -668,14 +668,15 @@ export class Game {
   }
 
   private renderTowerActions(ctx: CanvasRenderingContext2D, t: Tower): void {
-    this.text(ctx, `${t.type.name}  Lv.${t.level}`, 24, 1108, 26, t.type.color, 'left');
+    const sub = t.levelName ? `  ${t.levelName}` : '';
+    this.text(ctx, `${t.type.name}  Lv.${t.level}${sub}`, 24, 1108, 26, t.type.color, 'left');
 
     let stats: string;
     if (t.isSupport) {
       const pct = Math.round((t.supportFireRateMul - 1) * 100);
       stats = `周囲の連射 +${pct}%    射程 ${t.range}`;
     } else {
-      const tag = t.type.splashRadius ? '  範囲' : t.type.slowFactor ? '  減速' : '';
+      const tag = t.splashRadius ? '  範囲' : t.slowFactor ? '  減速' : '';
       const buff = t.buffMultiplier > 1 ? `  （補助+${Math.round((t.buffMultiplier - 1) * 100)}%）` : '';
       stats = `攻撃 ${t.damage}  射程 ${t.range}  連射 ${t.fireRate.toFixed(1)}/s${tag}${buff}`;
     }
@@ -729,51 +730,53 @@ export class Game {
     this.text(ctx, 'ステータス一覧', VIRTUAL_W / 2, 60, 42, COLORS.accent);
     this.text(ctx, 'タップで閉じる', VIRTUAL_W / 2, 100, 20, COLORS.textDim);
 
-    // --- タワー ---
-    this.text(ctx, 'タワー', 30, 146, 26, COLORS.text, 'left');
+    // --- タワー（Lv1 の基本性能＋進化の説明） ---
+    this.text(ctx, 'タワー（Lv1 の基本性能）', 30, 126, 22, COLORS.text, 'left');
     TOWER_TYPE_LIST.forEach((type, i) => {
-      const y = 178 + i * 84;
-      this.infoRowBg(ctx, y, 76);
+      const y = 154 + i * 88;
+      this.infoRowBg(ctx, y, 80);
+      const lv1 = type.levels[0];
       ctx.fillStyle = type.color;
       ctx.beginPath();
-      ctx.arc(54, y + 26, 12, 0, Math.PI * 2);
+      ctx.arc(52, y + 24, 12, 0, Math.PI * 2);
       ctx.fill();
-      this.text(ctx, type.name, 80, y + 24, 24, type.color, 'left');
-      this.text(ctx, `建設 ${type.cost}G`, VIRTUAL_W - 30, y + 24, 20, COLORS.money, 'right');
+      this.text(ctx, type.name, 78, y + 22, 24, type.color, 'left');
+      this.text(ctx, `建設 ${type.cost}G`, VIRTUAL_W - 28, y + 22, 20, COLORS.money, 'right');
 
       let stats: string;
-      if (type.support) {
-        const pct = Math.round((type.support.fireRateMul - 1) * 100);
-        stats = `補助: 周囲の連射 +${pct}%（+15%/Lv）・射程 ${type.range}・攻撃なし`;
+      if (type.isSupport) {
+        const pct = Math.round(((lv1.supportFireRateMul ?? 1) - 1) * 100);
+        stats = `補助: 周囲の連射 +${pct}%・射程 ${lv1.range}・攻撃なし`;
       } else {
-        const tag = type.splashRadius
-          ? '・範囲攻撃'
-          : type.slowFactor
-            ? `・減速 ${Math.round((1 - type.slowFactor) * 100)}%`
+        const tag = lv1.splashRadius
+          ? '・範囲'
+          : lv1.slowFactor
+            ? `・減速 ${Math.round((1 - lv1.slowFactor) * 100)}%`
             : '';
-        stats = `攻撃 ${type.damage}・射程 ${type.range}・連射 ${type.fireRate.toFixed(1)}/s${tag}`;
+        stats = `攻撃 ${lv1.damage}・射程 ${lv1.range}・連射 ${lv1.fireRate.toFixed(1)}/s${tag}`;
       }
-      this.text(ctx, stats, 80, y + 54, 19, COLORS.textDim, 'left');
+      this.text(ctx, stats, 78, y + 47, 18, COLORS.text, 'left');
+      this.text(ctx, type.desc, 78, y + 69, 17, COLORS.textDim, 'left');
     });
 
-    // --- 敵 ---
-    const enemyTop = 178 + TOWER_TYPE_LIST.length * 84 + 18;
-    this.text(ctx, '敵', 30, enemyTop, 26, COLORS.text, 'left');
+    // --- 敵（種別倍率） ---
+    const enemyTop = 154 + TOWER_TYPE_LIST.length * 88 + 8;
+    this.text(ctx, '敵（種別倍率）', 30, enemyTop, 22, COLORS.text, 'left');
     ENEMY_TYPE_LIST.forEach((et, i) => {
-      const y = enemyTop + 30 + i * 78;
-      this.infoRowBg(ctx, y, 70);
+      const y = enemyTop + 28 + i * 74;
+      this.infoRowBg(ctx, y, 66);
       ctx.fillStyle = et.color;
       ctx.beginPath();
-      ctx.arc(54, y + 24, 12, 0, Math.PI * 2);
+      ctx.arc(52, y + 22, 12, 0, Math.PI * 2);
       ctx.fill();
-      this.text(ctx, et.name, 80, y + 22, 24, et.color, 'left');
-      this.text(ctx, `報酬 ${et.reward}G`, VIRTUAL_W - 30, y + 22, 20, COLORS.money, 'right');
+      this.text(ctx, et.name, 78, y + 20, 24, et.color, 'left');
+      this.text(ctx, `報酬 ${et.reward}G`, VIRTUAL_W - 28, y + 20, 20, COLORS.money, 'right');
       this.text(
         ctx,
         `HP ×${et.hpMul}・速度 ×${et.speedMul}・装甲 ${et.armor}`,
-        80,
-        y + 50,
-        19,
+        78,
+        y + 46,
+        18,
         COLORS.textDim,
         'left',
       );
@@ -783,8 +786,8 @@ export class Game {
       ctx,
       '※敵の基準HP=20+9×WAVE / 速度=60+3×WAVE（種別倍率を乗算）',
       VIRTUAL_W / 2,
-      1244,
-      18,
+      enemyTop + 28 + ENEMY_TYPE_LIST.length * 74 + 22,
+      17,
       COLORS.textDim,
     );
   }

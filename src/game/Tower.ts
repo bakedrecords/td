@@ -1,9 +1,9 @@
 import type { Enemy } from './Enemy';
 import { Projectile } from './Projectile';
-import { supportFireRateMulAt, towerStatsAt, type TowerType } from './towerTypes';
+import type { TowerLevel, TowerType } from './towerTypes';
 import type { Vec2 } from './types';
 
-/** 射程内の敵を狙って弾を撃つタワー。種別とレベルを持つ。 */
+/** 射程内の敵を狙って弾を撃つタワー。レベルごとに性能・特殊効果が変化する。 */
 export class Tower {
   readonly pos: Vec2;
   readonly type: TowerType;
@@ -25,16 +25,7 @@ export class Tower {
   angle = -Math.PI / 2;
 
   private cooldown = 0;
-
-  /** 補助塔かどうか。 */
-  get isSupport(): boolean {
-    return this.type.support !== undefined;
-  }
-
-  /** 補助塔として味方に与える連射倍率（攻撃塔なら 1）。 */
-  get supportFireRateMul(): number {
-    return supportFireRateMulAt(this.type, this.level);
-  }
+  private def!: TowerLevel; // 現在レベルの定義
 
   constructor(pos: Vec2, type: TowerType, cellKey: string) {
     this.pos = pos;
@@ -45,10 +36,35 @@ export class Tower {
   }
 
   private recompute(): void {
-    const s = towerStatsAt(this.type, this.level);
-    this.range = s.range;
-    this.damage = s.damage;
-    this.fireRate = s.fireRate;
+    this.def = this.type.levels[this.level - 1];
+    this.range = this.def.range;
+    this.damage = this.def.damage;
+    this.fireRate = this.def.fireRate;
+  }
+
+  /** 補助塔かどうか。 */
+  get isSupport(): boolean {
+    return this.type.isSupport === true;
+  }
+
+  /** 補助塔として味方に与える連射倍率（攻撃塔なら 1）。 */
+  get supportFireRateMul(): number {
+    return this.def.supportFireRateMul ?? 1;
+  }
+
+  /** 現在レベルの呼び名（あれば）。 */
+  get levelName(): string | undefined {
+    return this.def.name;
+  }
+
+  /** 現在レベルが範囲攻撃を持つなら半径。 */
+  get splashRadius(): number | undefined {
+    return this.def.splashRadius;
+  }
+
+  /** 現在レベルが減速を持つなら係数。 */
+  get slowFactor(): number | undefined {
+    return this.def.slowFactor;
   }
 
   /** レベルを 1 上げ、投資総額に費用を加算する。 */
@@ -73,10 +89,10 @@ export class Tower {
       projectiles.push(
         new Projectile({ x: this.pos.x, y: this.pos.y }, target, this.damage, {
           speed: this.type.projectileSpeed,
-          color: this.type.projectileColor,
-          splashRadius: this.type.splashRadius,
-          slowFactor: this.type.slowFactor,
-          slowDuration: this.type.slowDuration,
+          color: this.def.projectileColor ?? this.type.projectileColor,
+          splashRadius: this.def.splashRadius,
+          slowFactor: this.def.slowFactor,
+          slowDuration: this.def.slowDuration,
         }),
       );
       // 補助塔の連射バフを反映（buffMultiplier 倍だけ間隔を短縮）

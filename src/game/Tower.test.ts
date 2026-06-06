@@ -75,4 +75,43 @@ describe('Tower', () => {
 
     expect(pa.length).toBeGreaterThan(pb.length);
   });
+
+  it('Matenrou は Lv で名前が変わり、Lv3 で範囲攻撃になる', () => {
+    const t = new Tower({ x: 0, y: 0 }, TOWER_TYPES.gun, '0,0');
+    expect(t.levelName).toBe('ガン');
+    expect(t.splashRadius).toBeUndefined();
+    t.applyUpgrade(40);
+    expect(t.levelName).toBe('マシンガン');
+    t.applyUpgrade(65);
+    expect(t.level).toBe(3);
+    expect(t.levelName).toBe('ファイア');
+    expect(t.splashRadius).toBeGreaterThan(0); // Lv3 で範囲化
+  });
+
+  it('Sae は近距離で、Lv で射程と威力が上がる', () => {
+    const t = new Tower({ x: 0, y: 0 }, TOWER_TYPES.cannon, '0,0');
+    expect(t.range).toBeLessThan(TOWER_TYPES.gun.levels[0].range); // ガンより短射程
+    expect(t.splashRadius).toBeUndefined(); // 範囲攻撃は持たない
+    const r1 = t.range;
+    const d1 = t.damage;
+    t.applyUpgrade(72);
+    expect(t.range).toBeGreaterThan(r1);
+    expect(t.damage).toBeGreaterThan(d1);
+  });
+
+  it('Eita は Lv3 で範囲化しても減速を保持する', () => {
+    const t = new Tower({ x: 0, y: 0 }, TOWER_TYPES.frost, '0,0');
+    expect(t.slowFactor).toBeGreaterThan(0);
+    expect(t.slowFactor).toBeLessThan(1);
+    expect(t.splashRadius).toBeUndefined();
+    t.applyUpgrade(56);
+    t.applyUpgrade(91);
+    expect(t.level).toBe(3);
+    expect(t.splashRadius).toBeGreaterThan(0); // 範囲化
+    expect(t.slowFactor).toBeGreaterThan(0); // 減速も維持
+  });
+
+  it('Tsukahara の射程は控えめ（300 未満）', () => {
+    expect(TOWER_TYPES.sniper.levels[0].range).toBeLessThan(300);
+  });
 });
