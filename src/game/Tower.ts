@@ -1,6 +1,6 @@
 import type { Enemy } from './Enemy';
 import { Projectile } from './Projectile';
-import { towerStatsAt, type TowerType } from './towerTypes';
+import { supportFireRateMulAt, towerStatsAt, type TowerType } from './towerTypes';
 import type { Vec2 } from './types';
 
 /** 射程内の敵を狙って弾を撃つタワー。種別とレベルを持つ。 */
@@ -18,10 +18,23 @@ export class Tower {
   damage = 0;
   fireRate = 0;
 
+  /** 補助塔から受けている連射倍率（Game が毎フレーム設定）。 */
+  buffMultiplier = 1;
+
   /** 砲身の向き（描画用）。初期は上向き。 */
   angle = -Math.PI / 2;
 
   private cooldown = 0;
+
+  /** 補助塔かどうか。 */
+  get isSupport(): boolean {
+    return this.type.support !== undefined;
+  }
+
+  /** 補助塔として味方に与える連射倍率（攻撃塔なら 1）。 */
+  get supportFireRateMul(): number {
+    return supportFireRateMulAt(this.type, this.level);
+  }
 
   constructor(pos: Vec2, type: TowerType, cellKey: string) {
     this.pos = pos;
@@ -46,6 +59,8 @@ export class Tower {
   }
 
   update(dt: number, enemies: Enemy[], projectiles: Projectile[]): void {
+    if (this.isSupport) return; // 補助塔は攻撃しない
+
     this.cooldown -= dt;
 
     const target = this.pickTarget(enemies);
@@ -64,7 +79,8 @@ export class Tower {
           slowDuration: this.type.slowDuration,
         }),
       );
-      this.cooldown = 1 / this.fireRate;
+      // 補助塔の連射バフを反映（buffMultiplier 倍だけ間隔を短縮）
+      this.cooldown = 1 / (this.fireRate * this.buffMultiplier);
     }
   }
 

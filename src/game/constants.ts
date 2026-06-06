@@ -18,6 +18,7 @@ export const GRID_BOTTOM = GRID_TOP + ROWS * TILE; // = 1080
 export const START_LIVES = 20;
 export const START_MONEY = 150;
 export const TOTAL_WAVES = 10;
+export const AUTO_START_DELAY = 5; // ウェーブ終了後、自動で次を開始するまでの秒数
 
 // アップグレード
 export const MAX_TOWER_LEVEL = 3;

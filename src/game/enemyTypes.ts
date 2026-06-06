@@ -69,3 +69,12 @@ export const ENEMY_TYPES: Record<EnemyTypeId, EnemyType> = {
     armor: 8,
   },
 };
+
+/** 一覧表示などで使う敵種別の並び順。 */
+export const ENEMY_TYPE_LIST: EnemyType[] = [
+  ENEMY_TYPES.normal,
+  ENEMY_TYPES.fast,
+  ENEMY_TYPES.tank,
+  ENEMY_TYPES.swarm,
+  ENEMY_TYPES.boss,
+];

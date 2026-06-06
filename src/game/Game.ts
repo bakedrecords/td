@@ -1,4 +1,5 @@
 import {
+  AUTO_START_DELAY,
   COLORS,
   COLS,
   GRID_BOTTOM,
@@ -13,7 +14,7 @@ import {
   VIRTUAL_W,
 } from './constants';
 import { Enemy } from './Enemy';
-import { ENEMY_TYPES } from './enemyTypes';
+import { ENEMY_TYPES, ENEMY_TYPE_LIST } from './enemyTypes';
 import { cellCenter, isPathCell, WAYPOINTS } from './Path';
 import { Projectile } from './Projectile';
 import { Tower } from './Tower';
@@ -42,6 +43,13 @@ interface SpawnItem {
   interval: number;
 }
 
+/** 1 ウェーブぶんの敵を順番に湧かせるスポナー（早出しで複数同時に走る）。 */
+interface Spawner {
+  items: SpawnItem[];
+  index: number;
+  timer: number;
+}
+
 /**
  * ゲーム全体の状態・更新・描画を統括するクラス。
  * 仮想座標系（720x1280）で考え、入力も仮想座標で受け取る。
@@ -60,17 +68,29 @@ export class Game {
   private buildType: TowerTypeId = 'gun';
   private selectedTower: Tower | null = null;
 
-  // 現在のウェーブの敵スポーン管理
-  private spawnList: SpawnItem[] = [];
-  private spawnIndex = 0;
-  private spawnTimer = 0;
+  // 敵スポーン（早出しに対応するため複数のスポナーを同時進行）
+  private spawners: Spawner[] = [];
+  // ウェーブ終了後の自動スタートまでの残り秒（0 なら手動待ち）
+  private readyCountdown = 0;
+  // ステータス一覧の表示中フラグ（表示中はゲームを一時停止）
+  private showInfo = false;
 
   // ---- 更新 -------------------------------------------------------------
 
   update(dt: number): void {
+    if (this.showInfo) return; // 一覧表示中は一時停止
     if (this.state === 'gameover' || this.state === 'victory') return;
 
+    if (this.state === 'ready' && this.readyCountdown > 0) {
+      this.readyCountdown -= dt;
+      if (this.readyCountdown <= 0) {
+        this.readyCountdown = 0;
+        this.launchNextWave();
+      }
+    }
+
     this.updateSpawning(dt);
+    this.computeSupportBuffs();
 
     for (const t of this.towers.values()) {
       t.update(dt, this.enemies, this.projectiles);
@@ -84,13 +104,34 @@ export class Game {
   }
 
   private updateSpawning(dt: number): void {
-    if (this.state !== 'wave' || this.spawnIndex >= this.spawnList.length) return;
-    this.spawnTimer -= dt;
-    if (this.spawnTimer <= 0) {
-      const item = this.spawnList[this.spawnIndex];
-      this.enemies.push(new Enemy(item.type, item.hp, item.speed, item.reward));
-      this.spawnIndex++;
-      this.spawnTimer = item.interval;
+    for (const s of this.spawners) {
+      if (s.index >= s.items.length) continue;
+      s.timer -= dt;
+      if (s.timer <= 0) {
+        const item = s.items[s.index];
+        this.enemies.push(new Enemy(item.type, item.hp, item.speed, item.reward));
+        s.index++;
+        s.timer = item.interval;
+      }
+    }
+    // 使い切ったスポナーを除去
+    this.spawners = this.spawners.filter((s) => s.index < s.items.length);
+  }
+
+  /** 補助塔の射程内にいる味方タワーへ連射バフを設定する。 */
+  private computeSupportBuffs(): void {
+    const supports: Tower[] = [];
+    for (const t of this.towers.values()) if (t.isSupport) supports.push(t);
+
+    for (const t of this.towers.values()) {
+      if (t.isSupport) continue;
+      let mul = 1;
+      for (const s of supports) {
+        if (Math.hypot(t.pos.x - s.pos.x, t.pos.y - s.pos.y) <= s.range) {
+          mul *= s.supportFireRateMul;
+        }
+      }
+      t.buffMultiplier = mul;
     }
   }
 
@@ -114,21 +155,27 @@ export class Game {
 
   private checkWaveComplete(): void {
     if (this.state !== 'wave') return;
-    if (this.spawnIndex >= this.spawnList.length && this.enemies.length === 0) {
-      this.state = this.wave >= TOTAL_WAVES ? 'victory' : 'ready';
+    if (this.spawners.length === 0 && this.enemies.length === 0) {
+      if (this.wave >= TOTAL_WAVES) {
+        this.state = 'victory';
+      } else {
+        this.state = 'ready';
+        this.readyCountdown = AUTO_START_DELAY; // 5 秒後に自動で次へ
+      }
     }
   }
 
-  private startWave(): void {
-    if (this.state !== 'ready') return;
+  /** 次のウェーブを出撃させる（手動スタート・自動スタート・早出し兼用）。 */
+  private launchNextWave(): void {
+    if (this.wave >= TOTAL_WAVES) return; // これ以上呼べる波がない
     this.wave++;
-    const def = WAVES[Math.min(this.wave, WAVES.length) - 1];
+    const def = WAVES[this.wave - 1];
     const base = enemyBaseStats(this.wave);
-    const list: SpawnItem[] = [];
+    const items: SpawnItem[] = [];
     for (const g of def.groups) {
       const et = ENEMY_TYPES[g.type];
       for (let i = 0; i < g.count; i++) {
-        list.push({
+        items.push({
           type: et,
           hp: Math.round(base.hp * et.hpMul),
           speed: base.speed * et.speedMul,
@@ -137,9 +184,8 @@ export class Game {
         });
       }
     }
-    this.spawnList = list;
-    this.spawnIndex = 0;
-    this.spawnTimer = 0;
+    this.spawners.push({ items, index: 0, timer: 0 });
+    this.readyCountdown = 0;
     this.state = 'wave';
   }
 
@@ -153,18 +199,34 @@ export class Game {
     this.state = 'ready';
     this.buildType = 'gun';
     this.selectedTower = null;
-    this.spawnList = [];
-    this.spawnIndex = 0;
-    this.spawnTimer = 0;
+    this.spawners = [];
+    this.readyCountdown = 0;
+    this.showInfo = false;
   }
 
   private get remainingEnemies(): number {
-    return this.spawnList.length - this.spawnIndex + this.enemies.length;
+    let queued = 0;
+    for (const s of this.spawners) queued += s.items.length - s.index;
+    return queued + this.enemies.length;
+  }
+
+  private hasType(id: TowerTypeId): boolean {
+    for (const t of this.towers.values()) if (t.type.id === id) return true;
+    return false;
+  }
+
+  private findTowerOfType(id: TowerTypeId): Tower | null {
+    for (const t of this.towers.values()) if (t.type.id === id) return t;
+    return null;
   }
 
   // ---- 入力 -------------------------------------------------------------
 
   handlePointer(v: Vec2): void {
+    if (this.showInfo) {
+      this.showInfo = false; // 一覧はどこをタップしても閉じる
+      return;
+    }
     if (this.state === 'gameover' || this.state === 'victory') {
       this.reset();
       return;
@@ -184,19 +246,29 @@ export class Game {
 
     // 下部パネル
     if (v.y >= GRID_BOTTOM) {
-      if (!this.selectedTower) {
-        for (let i = 0; i < TOWER_TYPE_LIST.length; i++) {
-          if (this.inRect(v, this.paletteRect(i))) {
-            this.buildType = TOWER_TYPE_LIST[i].id;
-            return;
+      if (this.selectedTower) return; // 強化/売却パネル表示中は他を無効化
+
+      for (let i = 0; i < TOWER_TYPE_LIST.length; i++) {
+        if (this.inRect(v, this.paletteRect(i))) {
+          const type = TOWER_TYPE_LIST[i];
+          const existing = this.findTowerOfType(type.id);
+          if (existing) {
+            this.selectedTower = existing; // 設置済みなら、その塔を選択
+          } else {
+            this.buildType = type.id; // 未設置なら建設対象に
           }
-        }
-        if (this.state === 'ready' && this.inRect(v, this.startBtn)) {
-          this.startWave();
           return;
         }
       }
-      return; // パネル内のその他は無効（選択は維持）
+      if (this.inRect(v, this.infoBtn)) {
+        this.showInfo = true;
+        return;
+      }
+      if (this.inRect(v, this.mainActionBtn)) {
+        this.launchNextWave(); // ready=開始 / wave=早出し
+        return;
+      }
+      return;
     }
 
     // グリッド内
@@ -226,6 +298,7 @@ export class Game {
     const key = `${col},${row}`;
     if (isPathCell(col, row)) return;
     if (this.towers.has(key)) return;
+    if (this.hasType(this.buildType)) return; // 同じ種別は 1 基まで
     const type = TOWER_TYPES[this.buildType];
     if (this.money < type.cost) return;
     this.money -= type.cost;
@@ -257,23 +330,27 @@ export class Game {
   // ---- レイアウト（下部パネルのボタン矩形） -----------------------------
 
   private paletteRect(i: number): Rect {
-    const margin = 12;
-    const gap = 8;
+    const margin = 10;
+    const gap = 7;
     const n = TOWER_TYPE_LIST.length;
     const w = (VIRTUAL_W - margin * 2 - gap * (n - 1)) / n;
-    return { x: margin + i * (w + gap), y: 1090, w, h: 86 };
+    return { x: margin + i * (w + gap), y: 1086, w, h: 84 };
   }
 
-  private get startBtn(): Rect {
-    return { x: VIRTUAL_W / 2 - 220, y: 1184, w: 440, h: 84 };
+  private get mainActionBtn(): Rect {
+    return { x: 10, y: 1182, w: 506, h: 86 };
+  }
+
+  private get infoBtn(): Rect {
+    return { x: 524, y: 1182, w: 186, h: 86 };
   }
 
   private get upgradeBtn(): Rect {
-    return { x: 12, y: 1184, w: 342, h: 84 };
+    return { x: 12, y: 1182, w: 342, h: 86 };
   }
 
   private get sellBtn(): Rect {
-    return { x: 366, y: 1184, w: 342, h: 84 };
+    return { x: 366, y: 1182, w: 342, h: 86 };
   }
 
   // ---- 描画 -------------------------------------------------------------
@@ -281,6 +358,7 @@ export class Game {
   render(ctx: CanvasRenderingContext2D): void {
     this.renderField(ctx);
     this.renderPath(ctx);
+    this.renderSupportAuras(ctx);
     this.renderSelectionRange(ctx);
     this.renderTowers(ctx);
     this.renderEnemies(ctx);
@@ -290,6 +368,7 @@ export class Game {
     if (this.state === 'gameover' || this.state === 'victory') {
       this.renderOverlay(ctx);
     }
+    if (this.showInfo) this.renderInfoOverlay(ctx);
   }
 
   private renderField(ctx: CanvasRenderingContext2D): void {
@@ -330,6 +409,20 @@ export class Game {
     ctx.stroke();
   }
 
+  /** 補助塔のバフ範囲（薄いオーラ）。 */
+  private renderSupportAuras(ctx: CanvasRenderingContext2D): void {
+    for (const t of this.towers.values()) {
+      if (!t.isSupport) continue;
+      ctx.fillStyle = 'rgba(255, 123, 213, 0.07)';
+      ctx.beginPath();
+      ctx.arc(t.pos.x, t.pos.y, t.range, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255, 123, 213, 0.30)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+  }
+
   /** 選択中タワーの射程を強調表示。 */
   private renderSelectionRange(ctx: CanvasRenderingContext2D): void {
     const t = this.selectedTower;
@@ -347,45 +440,55 @@ export class Game {
     for (const t of this.towers.values()) {
       // 土台
       ctx.fillStyle = COLORS.towerBase;
-      this.roundRect(
-        ctx,
-        t.pos.x - t.radius,
-        t.pos.y - t.radius,
-        t.radius * 2,
-        t.radius * 2,
-        10,
-      );
+      this.roundRect(ctx, t.pos.x - t.radius, t.pos.y - t.radius, t.radius * 2, t.radius * 2, 10);
       ctx.fill();
 
       // 選択中は枠を強調
       if (t === this.selectedTower) {
         ctx.strokeStyle = COLORS.selected;
         ctx.lineWidth = 3;
-        this.roundRect(
-          ctx,
-          t.pos.x - t.radius,
-          t.pos.y - t.radius,
-          t.radius * 2,
-          t.radius * 2,
-          10,
-        );
+        this.roundRect(ctx, t.pos.x - t.radius, t.pos.y - t.radius, t.radius * 2, t.radius * 2, 10);
         ctx.stroke();
       }
 
-      // 砲塔
-      ctx.fillStyle = t.type.color;
-      ctx.beginPath();
-      ctx.arc(t.pos.x, t.pos.y, t.radius * 0.6, 0, Math.PI * 2);
-      ctx.fill();
-
-      // 砲身（ターゲット方向）
-      ctx.save();
-      ctx.translate(t.pos.x, t.pos.y);
-      ctx.rotate(t.angle);
-      ctx.fillStyle = t.type.color;
-      this.roundRect(ctx, 0, -7, t.radius + 10, 14, 6);
-      ctx.fill();
-      ctx.restore();
+      if (t.isSupport) {
+        // 補助塔はリング状アイコン（砲身なし）
+        ctx.strokeStyle = t.type.color;
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.arc(t.pos.x, t.pos.y, t.radius * 0.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = t.type.color;
+        ctx.beginPath();
+        ctx.arc(t.pos.x, t.pos.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        // 砲塔
+        ctx.fillStyle = t.type.color;
+        ctx.beginPath();
+        ctx.arc(t.pos.x, t.pos.y, t.radius * 0.6, 0, Math.PI * 2);
+        ctx.fill();
+        // 砲身（ターゲット方向）
+        ctx.save();
+        ctx.translate(t.pos.x, t.pos.y);
+        ctx.rotate(t.angle);
+        ctx.fillStyle = t.type.color;
+        this.roundRect(ctx, 0, -7, t.radius + 10, 14, 6);
+        ctx.fill();
+        ctx.restore();
+        // 補助バフを受けている印（小さな三角）
+        if (t.buffMultiplier > 1) {
+          const bx = t.pos.x + t.radius - 5;
+          const by = t.pos.y - t.radius + 9;
+          ctx.fillStyle = TOWER_TYPES.support.color;
+          ctx.beginPath();
+          ctx.moveTo(bx, by - 7);
+          ctx.lineTo(bx - 6, by + 4);
+          ctx.lineTo(bx + 6, by + 4);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
 
       // レベルピップ（下辺に level 個）
       for (let i = 0; i < t.level; i++) {
@@ -490,94 +593,101 @@ export class Game {
 
     if (this.selectedTower) {
       this.renderTowerActions(ctx, this.selectedTower);
-    } else {
-      this.renderPalette(ctx);
-      if (this.state === 'ready') {
-        this.button(ctx, this.startBtn, `WAVE ${this.wave + 1} スタート`, COLORS.accent);
-      } else if (this.state === 'wave') {
-        this.text(
-          ctx,
-          `WAVE ${this.wave} 進行中  ／  残り ${this.remainingEnemies}`,
-          VIRTUAL_W / 2,
-          1226,
-          32,
-          COLORS.text,
-        );
-      }
+      return;
     }
+
+    this.renderPalette(ctx);
+    this.renderMainAction(ctx);
+    this.renderInfoButton(ctx);
   }
 
   private renderPalette(ctx: CanvasRenderingContext2D): void {
     TOWER_TYPE_LIST.forEach((type, i) => {
       const r = this.paletteRect(i);
-      const selected = type.id === this.buildType;
+      const placed = this.hasType(type.id);
+      const isBuild = type.id === this.buildType && !placed;
       const affordable = this.money >= type.cost;
 
-      ctx.fillStyle = selected ? COLORS.btnSel : COLORS.btn;
+      ctx.fillStyle = isBuild ? COLORS.btnSel : COLORS.btn;
       this.roundRect(ctx, r.x, r.y, r.w, r.h, 12);
       ctx.fill();
-      ctx.strokeStyle = selected ? COLORS.selected : 'rgba(255,255,255,0.08)';
-      ctx.lineWidth = selected ? 3 : 1.5;
+      ctx.strokeStyle = placed
+        ? COLORS.accent
+        : isBuild
+          ? COLORS.selected
+          : 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = placed || isBuild ? 3 : 1.5;
       this.roundRect(ctx, r.x, r.y, r.w, r.h, 12);
       ctx.stroke();
 
       const cx = r.x + r.w / 2;
-      // アイコン（小さな砲塔）
-      ctx.globalAlpha = affordable ? 1 : 0.4;
+      ctx.globalAlpha = placed ? 0.55 : affordable ? 1 : 0.4;
       ctx.fillStyle = COLORS.towerBase;
-      this.roundRect(ctx, cx - 15, r.y + 9, 30, 30, 7);
+      this.roundRect(ctx, cx - 14, r.y + 7, 28, 28, 7);
       ctx.fill();
       ctx.fillStyle = type.color;
       ctx.beginPath();
-      ctx.arc(cx, r.y + 24, 9, 0, Math.PI * 2);
+      ctx.arc(cx, r.y + 21, 8, 0, Math.PI * 2);
       ctx.fill();
       ctx.globalAlpha = 1;
 
-      this.text(ctx, type.name, cx, r.y + 53, 19, affordable ? COLORS.text : COLORS.textDim);
-      this.text(
-        ctx,
-        `${type.cost}G`,
-        cx,
-        r.y + 73,
-        18,
-        affordable ? COLORS.money : COLORS.danger,
-      );
+      this.text(ctx, type.name, cx, r.y + 50, 17, placed || !affordable ? COLORS.textDim : COLORS.text);
+      if (placed) {
+        this.text(ctx, '設置済', cx, r.y + 69, 16, COLORS.accent);
+      } else {
+        this.text(ctx, `${type.cost}G`, cx, r.y + 69, 16, affordable ? COLORS.money : COLORS.danger);
+      }
     });
   }
 
+  private renderMainAction(ctx: CanvasRenderingContext2D): void {
+    const r = this.mainActionBtn;
+    if (this.state === 'ready') {
+      const label =
+        this.readyCountdown > 0
+          ? `WAVE ${this.wave + 1} 開始（自動 ${Math.ceil(this.readyCountdown)}s）`
+          : `WAVE ${this.wave + 1} 開始 ▶`;
+      this.button(ctx, r, label, COLORS.accent);
+    } else if (this.wave < TOTAL_WAVES) {
+      this.button(ctx, r, `WAVE ${this.wave + 1} を呼ぶ（残${this.remainingEnemies}）`, COLORS.wave);
+    } else {
+      this.button(ctx, r, `最終WAVE 進行中（残${this.remainingEnemies}）`, COLORS.btn, false);
+    }
+  }
+
+  private renderInfoButton(ctx: CanvasRenderingContext2D): void {
+    const r = this.infoBtn;
+    ctx.fillStyle = COLORS.btnSel;
+    this.roundRect(ctx, r.x, r.y, r.w, r.h, 16);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1.5;
+    this.roundRect(ctx, r.x, r.y, r.w, r.h, 16);
+    ctx.stroke();
+    this.text(ctx, 'ステータス', r.x + r.w / 2, r.y + r.h / 2, 22, COLORS.text);
+  }
+
   private renderTowerActions(ctx: CanvasRenderingContext2D, t: Tower): void {
-    // 情報行
-    this.text(ctx, `${t.type.name}  Lv.${t.level}`, 24, 1110, 26, t.type.color, 'left');
+    this.text(ctx, `${t.type.name}  Lv.${t.level}`, 24, 1108, 26, t.type.color, 'left');
 
-    let tag = '';
-    if (t.type.splashRadius) tag = '  範囲';
-    else if (t.type.slowFactor) tag = '  減速';
-    this.text(
-      ctx,
-      `攻撃 ${t.damage}   射程 ${t.range}   連射 ${t.fireRate.toFixed(1)}/s${tag}`,
-      24,
-      1148,
-      22,
-      COLORS.textDim,
-      'left',
-    );
+    let stats: string;
+    if (t.isSupport) {
+      const pct = Math.round((t.supportFireRateMul - 1) * 100);
+      stats = `周囲の連射 +${pct}%    射程 ${t.range}`;
+    } else {
+      const tag = t.type.splashRadius ? '  範囲' : t.type.slowFactor ? '  減速' : '';
+      const buff = t.buffMultiplier > 1 ? `  （補助+${Math.round((t.buffMultiplier - 1) * 100)}%）` : '';
+      stats = `攻撃 ${t.damage}  射程 ${t.range}  連射 ${t.fireRate.toFixed(1)}/s${tag}${buff}`;
+    }
+    this.text(ctx, stats, 24, 1146, 22, COLORS.textDim, 'left');
 
-    // 強化ボタン
     const cost = upgradeCost(t.type, t.level);
     if (cost === null) {
       this.button(ctx, this.upgradeBtn, '強化 MAX', COLORS.accent, false);
     } else {
-      const ok = this.money >= cost;
-      this.button(
-        ctx,
-        this.upgradeBtn,
-        `強化 Lv.${t.level + 1}  ${cost}G`,
-        COLORS.accent,
-        ok,
-      );
+      this.button(ctx, this.upgradeBtn, `強化 Lv.${t.level + 1}  ${cost}G`, COLORS.accent, this.money >= cost);
     }
 
-    // 売却ボタン
     const refund = Math.round(t.totalInvested * SELL_REFUND_RATE);
     this.button(ctx, this.sellBtn, `売却  +${refund}G`, COLORS.sell);
   }
@@ -592,14 +702,7 @@ export class Game {
     ctx.fillStyle = enabled ? color : COLORS.btn;
     this.roundRect(ctx, r.x, r.y, r.w, r.h, 16);
     ctx.fill();
-    this.text(
-      ctx,
-      label,
-      r.x + r.w / 2,
-      r.y + r.h / 2,
-      30,
-      enabled ? '#06140e' : COLORS.textDim,
-    );
+    this.text(ctx, label, r.x + r.w / 2, r.y + r.h / 2, 28, enabled ? '#06140e' : COLORS.textDim);
   }
 
   private renderOverlay(ctx: CanvasRenderingContext2D): void {
@@ -616,6 +719,80 @@ export class Game {
     this.text(ctx, title, VIRTUAL_W / 2, 540, 88, color);
     this.text(ctx, subtitle, VIRTUAL_W / 2, 640, 34, COLORS.textDim);
     this.text(ctx, 'タップでリスタート', VIRTUAL_W / 2, 740, 36, COLORS.text);
+  }
+
+  /** タワー・敵のステータス一覧（図鑑）。 */
+  private renderInfoOverlay(ctx: CanvasRenderingContext2D): void {
+    ctx.fillStyle = 'rgba(5, 7, 15, 0.96)';
+    ctx.fillRect(0, 0, VIRTUAL_W, VIRTUAL_H);
+
+    this.text(ctx, 'ステータス一覧', VIRTUAL_W / 2, 60, 42, COLORS.accent);
+    this.text(ctx, 'タップで閉じる', VIRTUAL_W / 2, 100, 20, COLORS.textDim);
+
+    // --- タワー ---
+    this.text(ctx, 'タワー', 30, 146, 26, COLORS.text, 'left');
+    TOWER_TYPE_LIST.forEach((type, i) => {
+      const y = 178 + i * 84;
+      this.infoRowBg(ctx, y, 76);
+      ctx.fillStyle = type.color;
+      ctx.beginPath();
+      ctx.arc(54, y + 26, 12, 0, Math.PI * 2);
+      ctx.fill();
+      this.text(ctx, type.name, 80, y + 24, 24, type.color, 'left');
+      this.text(ctx, `建設 ${type.cost}G`, VIRTUAL_W - 30, y + 24, 20, COLORS.money, 'right');
+
+      let stats: string;
+      if (type.support) {
+        const pct = Math.round((type.support.fireRateMul - 1) * 100);
+        stats = `補助: 周囲の連射 +${pct}%（+15%/Lv）・射程 ${type.range}・攻撃なし`;
+      } else {
+        const tag = type.splashRadius
+          ? '・範囲攻撃'
+          : type.slowFactor
+            ? `・減速 ${Math.round((1 - type.slowFactor) * 100)}%`
+            : '';
+        stats = `攻撃 ${type.damage}・射程 ${type.range}・連射 ${type.fireRate.toFixed(1)}/s${tag}`;
+      }
+      this.text(ctx, stats, 80, y + 54, 19, COLORS.textDim, 'left');
+    });
+
+    // --- 敵 ---
+    const enemyTop = 178 + TOWER_TYPE_LIST.length * 84 + 18;
+    this.text(ctx, '敵', 30, enemyTop, 26, COLORS.text, 'left');
+    ENEMY_TYPE_LIST.forEach((et, i) => {
+      const y = enemyTop + 30 + i * 78;
+      this.infoRowBg(ctx, y, 70);
+      ctx.fillStyle = et.color;
+      ctx.beginPath();
+      ctx.arc(54, y + 24, 12, 0, Math.PI * 2);
+      ctx.fill();
+      this.text(ctx, et.name, 80, y + 22, 24, et.color, 'left');
+      this.text(ctx, `報酬 ${et.reward}G`, VIRTUAL_W - 30, y + 22, 20, COLORS.money, 'right');
+      this.text(
+        ctx,
+        `HP ×${et.hpMul}・速度 ×${et.speedMul}・装甲 ${et.armor}`,
+        80,
+        y + 50,
+        19,
+        COLORS.textDim,
+        'left',
+      );
+    });
+
+    this.text(
+      ctx,
+      '※敵の基準HP=20+9×WAVE / 速度=60+3×WAVE（種別倍率を乗算）',
+      VIRTUAL_W / 2,
+      1244,
+      18,
+      COLORS.textDim,
+    );
+  }
+
+  private infoRowBg(ctx: CanvasRenderingContext2D, y: number, h: number): void {
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    this.roundRect(ctx, 24, y, VIRTUAL_W - 48, h, 10);
+    ctx.fill();
   }
 
   // ---- 描画ヘルパー -----------------------------------------------------

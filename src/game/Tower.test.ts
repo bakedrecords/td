@@ -40,4 +40,39 @@ describe('Tower', () => {
     expect(tower.fireRate).toBeGreaterThan(f0);
     expect(tower.totalInvested).toBe(TOWER_TYPES.gun.cost + 40);
   });
+
+  it('補助塔は攻撃せず、強化で連射倍率が上がる', () => {
+    const e = new Enemy(ENEMY_TYPES.normal, 100, 0, 5);
+    const sup = new Tower({ x: e.pos.x + 10, y: e.pos.y }, TOWER_TYPES.support, '0,0');
+    const projectiles: Projectile[] = [];
+
+    for (let i = 0; i < 60; i++) sup.update(1 / 60, [e], projectiles);
+
+    expect(sup.isSupport).toBe(true);
+    expect(projectiles.length).toBe(0); // 攻撃しない
+    expect(sup.supportFireRateMul).toBeCloseTo(1.3);
+
+    sup.applyUpgrade(50);
+    expect(sup.supportFireRateMul).toBeGreaterThan(1.3);
+
+    const gun = new Tower({ x: 0, y: 0 }, TOWER_TYPES.gun, '1,0');
+    expect(gun.isSupport).toBe(false);
+    expect(gun.supportFireRateMul).toBe(1);
+  });
+
+  it('連射バフ（buffMultiplier）があると発射数が増える', () => {
+    const e = new Enemy(ENEMY_TYPES.normal, 100_000, 0, 5); // 大量 HP で死なない
+    const pos = { x: e.pos.x + 20, y: e.pos.y };
+
+    const buffed = new Tower(pos, TOWER_TYPES.gun, '0,0');
+    buffed.buffMultiplier = 3;
+    const pa: Projectile[] = [];
+    for (let i = 0; i < 600; i++) buffed.update(1 / 600, [e], pa);
+
+    const plain = new Tower(pos, TOWER_TYPES.gun, '1,0');
+    const pb: Projectile[] = [];
+    for (let i = 0; i < 600; i++) plain.update(1 / 600, [e], pb);
+
+    expect(pa.length).toBeGreaterThan(pb.length);
+  });
 });

@@ -1,6 +1,6 @@
 import { MAX_TOWER_LEVEL } from './constants';
 
-export type TowerTypeId = 'gun' | 'cannon' | 'frost' | 'sniper';
+export type TowerTypeId = 'gun' | 'cannon' | 'frost' | 'sniper' | 'support';
 
 export interface TowerType {
   id: TowerTypeId;
@@ -18,6 +18,8 @@ export interface TowerType {
   slowFactor?: number;
   /** スロー効果の持続秒数（任意） */
   slowDuration?: number;
+  /** 補助塔: 射程内の味方タワーの連射に掛ける倍率（Lv1 基準）。攻撃はしない。 */
+  support?: { fireRateMul: number };
   desc: string;
 }
 
@@ -73,6 +75,19 @@ export const TOWER_TYPES: Record<TowerTypeId, TowerType> = {
     projectileColor: '#d6bcff',
     desc: '超長射程・高威力だが連射が遅い',
   },
+  support: {
+    id: 'support',
+    name: 'サポート',
+    cost: 80,
+    color: '#ff7bd5',
+    range: 150,
+    damage: 0,
+    fireRate: 0,
+    projectileSpeed: 0,
+    projectileColor: '#ff7bd5',
+    support: { fireRateMul: 1.3 },
+    desc: '周囲タワーの連射速度を上げる補助塔（攻撃しない）',
+  },
 };
 
 /** パレット表示順 */
@@ -81,6 +96,7 @@ export const TOWER_TYPE_LIST: TowerType[] = [
   TOWER_TYPES.cannon,
   TOWER_TYPES.frost,
   TOWER_TYPES.sniper,
+  TOWER_TYPES.support,
 ];
 
 export interface ComputedTowerStats {
@@ -99,6 +115,12 @@ export function towerStatsAt(type: TowerType, level: number): ComputedTowerStats
     damage: Math.round(type.damage * d),
     fireRate: type.fireRate * f,
   };
+}
+
+/** 補助塔の連射倍率（レベルで強化）。補助塔でなければ 1。 */
+export function supportFireRateMulAt(type: TowerType, level: number): number {
+  if (!type.support) return 1;
+  return type.support.fireRateMul + 0.15 * (level - 1);
 }
 
 /** 現在 level から level+1 へ強化するための費用。最大レベルなら null。 */
