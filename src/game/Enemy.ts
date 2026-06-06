@@ -1,6 +1,11 @@
 import type { EnemyType } from './enemyTypes';
-import { WAYPOINTS } from './Path';
 import type { Vec2 } from './types';
+
+// テスト等で経路を指定しない場合の既定経路（上から下への直線）。
+const DEFAULT_WAYPOINTS: ReadonlyArray<Vec2> = [
+  { x: 360, y: -100 },
+  { x: 360, y: 2000 },
+];
 
 /** 経路に沿って進む敵。種別ごとに HP・速度・装甲・見た目が異なる。 */
 export class Enemy {
@@ -8,23 +13,29 @@ export class Enemy {
   readonly pos: Vec2;
   readonly maxHp: number;
   hp: number;
-  readonly baseSpeed: number; // ピクセル/秒（スロー無しの速度）
+  readonly baseSpeed: number;
   readonly reward: number;
   readonly radius: number;
   readonly armor: number;
 
-  /** 経路の総移動距離。タワーが「最も先行した敵」を狙うために使う。 */
+  /** 経路の総移動距離（タワーの「先行した敵」狙い用）。 */
   distanceTraveled = 0;
 
-  // スロー（フロスト塔）効果
   private slowTimer = 0;
   private slowFactor = 1;
 
-  private seg = 0; // 現在向かっている WAYPOINTS の区間 index
+  private readonly waypoints: ReadonlyArray<Vec2>;
+  private seg = 0;
   reachedEnd = false;
   dead = false;
 
-  constructor(type: EnemyType, hp: number, speed: number, reward: number) {
+  constructor(
+    type: EnemyType,
+    hp: number,
+    speed: number,
+    reward: number,
+    waypoints: ReadonlyArray<Vec2> = DEFAULT_WAYPOINTS,
+  ) {
     this.type = type;
     this.maxHp = hp;
     this.hp = hp;
@@ -32,10 +43,10 @@ export class Enemy {
     this.reward = reward;
     this.radius = type.radius;
     this.armor = type.armor;
-    this.pos = { x: WAYPOINTS[0].x, y: WAYPOINTS[0].y };
+    this.waypoints = waypoints;
+    this.pos = { x: waypoints[0].x, y: waypoints[0].y };
   }
 
-  /** 現在の実効速度（スロー中は減速）。 */
   get speed(): number {
     return this.slowTimer > 0 ? this.baseSpeed * this.slowFactor : this.baseSpeed;
   }
@@ -48,8 +59,8 @@ export class Enemy {
     if (this.slowTimer > 0) this.slowTimer -= dt;
 
     let remaining = this.speed * dt;
-    while (remaining > 0 && this.seg < WAYPOINTS.length - 1) {
-      const target = WAYPOINTS[this.seg + 1];
+    while (remaining > 0 && this.seg < this.waypoints.length - 1) {
+      const target = this.waypoints[this.seg + 1];
       const dx = target.x - this.pos.x;
       const dy = target.y - this.pos.y;
       const dist = Math.hypot(dx, dy);
@@ -68,7 +79,7 @@ export class Enemy {
       }
     }
 
-    if (this.seg >= WAYPOINTS.length - 1) {
+    if (this.seg >= this.waypoints.length - 1) {
       this.reachedEnd = true;
     }
   }

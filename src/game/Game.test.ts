@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { Game } from './Game';
 import { cellCenter } from './Path';
 import { TOWER_TYPES } from './towerTypes';
+import { STAGES } from './stages';
 
 // 下部パネルのボタン中心座標（Game 内のレイアウトに対応）
 const PALETTE_CANNON = { x: 219, y: 1128 }; // paletteRect(1) の中心
@@ -127,5 +128,44 @@ describe('Game', () => {
     for (let i = 0; i < 6 * 60; i++) g.update(1 / 60);
     expect(g.state).toBe('wave'); // 再開して自動スタート
     expect(g.wave).toBe(2);
+  });
+
+  it('初期はステージ1で、開始値はステージ定義に従う', () => {
+    const g = new Game();
+    expect(g.stageIndex).toBe(0);
+    expect(g.money).toBe(STAGES[0].startMoney);
+    expect(g.lives).toBe(STAGES[0].startLives);
+  });
+
+  it('ステージクリアでタップすると次のステージへ進む', () => {
+    const g = new Game();
+    g.state = 'stageclear'; // クリア状態を再現
+    g.handlePointer({ x: 360, y: 600 });
+    expect(g.stageIndex).toBe(1);
+    expect(g.state).toBe('ready');
+    expect(g.money).toBe(STAGES[1].startMoney);
+  });
+
+  it('ゲームオーバーでタップすると同じステージを再挑戦（開始値リセット）', () => {
+    const g = new Game();
+    g.state = 'stageclear';
+    g.handlePointer({ x: 360, y: 600 }); // → STAGE 2
+    expect(g.stageIndex).toBe(1);
+    g.money = 3;
+    g.state = 'gameover';
+    g.handlePointer({ x: 360, y: 600 });
+    expect(g.stageIndex).toBe(1); // 同じステージ
+    expect(g.state).toBe('ready');
+    expect(g.money).toBe(STAGES[1].startMoney);
+  });
+
+  it('全ステージ制覇でタップすると最初のステージに戻る', () => {
+    const g = new Game();
+    g.stageIndex = STAGES.length - 1;
+    g.state = 'victory';
+    g.handlePointer({ x: 360, y: 600 });
+    expect(g.stageIndex).toBe(0);
+    expect(g.state).toBe('ready');
+    expect(g.money).toBe(STAGES[0].startMoney);
   });
 });

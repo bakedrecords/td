@@ -1,27 +1,28 @@
 import { describe, it, expect } from 'vitest';
-import { WAYPOINTS, isPathCell, pathLength } from './Path';
+import { buildPath, cellCenter } from './Path';
+import { STAGES } from './stages';
 
 describe('Path', () => {
-  it('経路の曲がり角が 3 点以上ある', () => {
-    expect(WAYPOINTS.length).toBeGreaterThan(2);
-  });
-
-  it('連続する区間はすべて縦か横（斜め移動が無い）', () => {
-    for (let i = 0; i < WAYPOINTS.length - 1; i++) {
-      const a = WAYPOINTS[i];
-      const b = WAYPOINTS[i + 1];
+  it('buildPath: 曲がり角は軸並行・通過マス判定・正の長さ', () => {
+    const p = buildPath(STAGES[0].waypointsGrid);
+    expect(p.waypoints.length).toBeGreaterThan(2);
+    for (let i = 0; i < p.waypoints.length - 1; i++) {
+      const a = p.waypoints[i];
+      const b = p.waypoints[i + 1];
       const sameX = Math.abs(a.x - b.x) < 1e-6;
       const sameY = Math.abs(a.y - b.y) < 1e-6;
       expect(sameX || sameY).toBe(true);
     }
+    expect(p.length).toBeGreaterThan(0);
   });
 
-  it('経路マスとそうでないマスを正しく判定する', () => {
-    expect(isPathCell(4, 0)).toBe(true); // 上からの縦入口
-    expect(isPathCell(0, 0)).toBe(false); // 左上の設置可能マス
+  it('isPathCell が経路マスと空きマスを判定する', () => {
+    const p = buildPath(STAGES[0].waypointsGrid);
+    expect(p.isPathCell(4, 0)).toBe(true); // 上からの縦入口
+    expect(p.isPathCell(0, 0)).toBe(false); // 左上の空きマス
   });
 
-  it('経路の総延長は正の値', () => {
-    expect(pathLength()).toBeGreaterThan(0);
+  it('cellCenter はマス中心を返す', () => {
+    expect(cellCenter(0, 0).x).toBe(40);
   });
 });

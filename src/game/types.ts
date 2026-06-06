@@ -3,4 +3,4 @@ export interface Vec2 {
   y: number;
 }
 
-export type GameState = 'ready' | 'wave' | 'gameover' | 'victory';
+export type GameState = 'ready' | 'wave' | 'stageclear' | 'gameover' | 'victory';
