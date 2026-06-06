@@ -13,6 +13,12 @@ const ctx: CanvasRenderingContext2D = maybeCtx;
 const viewport = new Viewport(canvas);
 const game = new Game();
 
+// デバッグ用フック: URL に ?debug を付けたときだけゲームインスタンスを公開する。
+// （本番の通常アクセスでは無効。動作確認や開発時の状態参照に使う）
+if (new URLSearchParams(location.search).has('debug')) {
+  (window as unknown as { __game: Game }).__game = game;
+}
+
 window.addEventListener('resize', () => viewport.resize());
 window.addEventListener('orientationchange', () => viewport.resize());
 
