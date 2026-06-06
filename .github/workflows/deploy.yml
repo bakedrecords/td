@@ -1,15 +1,17 @@
 name: Deploy to GitHub Pages
 
-# main にプッシュされたらビルドして GitHub Pages へ公開する。
-# 手動実行（workflow_dispatch）でもデプロイ可能。
-#
-# 初回のみリポジトリ設定が必要:
-#   Settings → Pages → Build and deployment → Source を「GitHub Actions」に変更
-# 公開 URL: https://<ユーザー名>.github.io/td/
+# デフォルトブランチへ push するとビルドして GitHub Pages へ公開する。
+# configure-pages の enablement で Pages 自体も自動で有効化を試みるため、
+# 通常はリポジトリ設定を手動で触る必要はない。
+# （もし権限の都合で自動有効化に失敗した場合のみ、
+#   Settings → Pages → Build and deployment → Source を「GitHub Actions」にして再実行）
+# 公開 URL: https://bakedrecords.github.io/td/
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - claude/relaxed-brahmagupta-OA5am
   workflow_dispatch:
 
 permissions:
@@ -27,6 +29,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Configure Pages（未有効なら自動で有効化）
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/setup-node@v4
         with:
           node-version: 22
