@@ -1,10 +1,13 @@
 name: Deploy to GitHub Pages
 
-# デフォルトブランチへ push するとビルドして GitHub Pages へ公開する。
-# configure-pages の enablement で Pages 自体も自動で有効化を試みるため、
-# 通常はリポジトリ設定を手動で触る必要はない。
-# （もし権限の都合で自動有効化に失敗した場合のみ、
-#   Settings → Pages → Build and deployment → Source を「GitHub Actions」にして再実行）
+# デフォルトブランチへ push（または手動実行）でビルドして GitHub Pages へ公開する。
+#
+# 【初回のみ手動設定が必要】
+#   GitHub のセキュリティ仕様により、Actions の標準トークンでは初回の Pages 有効化が
+#   できません。リポジトリの Settings → Pages → Build and deployment → Source を
+#   「GitHub Actions」に一度だけ設定してください。以降は push で自動デプロイされます。
+#   設定ページ: https://github.com/bakedrecords/td/settings/pages
+#
 # 公開 URL: https://bakedrecords.github.io/td/
 
 on:
@@ -29,10 +32,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Configure Pages（未有効なら自動で有効化）
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/setup-node@v4
         with:
           node-version: 22
